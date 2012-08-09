@@ -1,7 +1,7 @@
 pretend-event-loop
 ==================
-This is a library that simulates an event loop. It uses threads and queued
-execution (via [jpl-queues](http://www.thoughtcrime.us/software/jpl-queues/))
+This is a common lisp library that simulates an event loop. It uses threads and
+queued execution (via [jpl-queues](http://www.thoughtcrime.us/software/jpl-queues/))
 to make blocking operations execute in the background while letting the main
 thread continue to execute.
 
