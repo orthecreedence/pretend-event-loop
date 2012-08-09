@@ -32,8 +32,9 @@ a distributed work queue:
 	;; asynchronously grab a beanstalkd connection
     (pel:next (conn) (beanstalk:connect "127.0.0.1" 11300)
 	  (format t "Got connection. Reserving job.~%")
-	  ;; we have a connection, now reserve the next job
+	  ;; we have a connection, now asynchronously reserve the next job
 	  (pel:next (job :multiple-value-list t) (beanstalk:reserve conn)
+		;; we got a job! process it
 		(dispatch-job job)))
 
 So what's happening is you're creating a connection in a background thread. The
@@ -132,7 +133,7 @@ It's mentioned in the code ove and over, but I think it's pertinent to mention
 it again. _Never, ever do any real processing in your passive threads_. They are
 meant for running blocking operations only, and simple error handling if you
 need it. It's better to run a passive thread as close as possible to the place
-it blocks. The less code between spwaning a passive job and when it blocks, the
+it blocks. The less code between spawning a passive job and when it blocks, the
 better. This system is designed to house a large number of passive threads and
 the last thing you want is 100 threads doing context switches.
 
