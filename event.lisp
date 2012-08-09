@@ -217,9 +217,10 @@
 
 (defun event-loop-start (&key error-handler)
   "Start the pretend event loop. Spins up *max-blocking-ops* threads, each of
-   which pulls blocking operations off the passive queue and executes them. It
-   also starts the active thread, would would be likened to the main thread in
-   an event loop (does everything, doesn't block).
+   which pulls blocking operations off the passive queue and executes them and
+   also spins up *max-work-threads* threads which pull operations off the work
+   queue. It also starts the active thread, would would be likened to the main
+   thread in an event loop (does everything, doesn't block).
    
    Allows passing in of a function that takes one argument (error object) that
    handles all unhandled errors in the active and passive threads. If an error

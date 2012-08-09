@@ -128,5 +128,5 @@ Notes
 -----
 That's it. This isn't as good as a real event loop as far as performance. As far
 as converting your entire app to be evented, that takes a lot of work and might
-be more of a pain in the ass than it's worth.
-
+be more of a pain in the ass than it's worth. This library meets somewhere in
+the middle.
