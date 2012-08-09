@@ -7,6 +7,7 @@
            #:work
            #:delay
            #:enqueue
+           #:size
            #:event-loop-stop
            #:event-loop-force-stop
            #:event-loop-start)
@@ -56,6 +57,15 @@
                            (:passive *internal-passive-queue*)
                            (:work *internal-work-queue*))))
 
+
+(defun size (type)
+  "Count how many elements are in a queue. Great for rate-limiting intake in an
+   application."
+  (assert (find type '(:active :passive :work)))
+  (jpl-queues:size (case type
+                     (:active *internal-active-queue*)
+                     (:passive *internal-passive-queue*)
+                     (:work *internal-work-queue*))))
 
 (defmacro background-task (var-and-options operation &body body)
   "Wraps the following task:

@@ -90,6 +90,19 @@ is more or less a graceful exit.
 Forcibly destroy all of the threads (active thread, passive threads, work
 threads).
 
+    (enqueue function &key (type :passive))
+
+Send a function to be worked on in the background. `:type` can be one of
+`(:active :passive :work)`, each one corresponding to which queue to send 
+`function` to be executed on.
+
+    (size type)
+
+Count the items in a queue. `type` can be one of `(:active :passive :work)`.
+This can be very useful for rate-limiting intake of work items in an app. For
+instance, you may want to stop reading jobs off of a queue after you have a
+certain number of blocking or cpu-intensive operations queued.
+
     (next (varname &key multiple-value-list sleep) blocking-op &body body)
 
 Wraps `blocking-op` in a function and sends it off to the background threads for
@@ -120,12 +133,6 @@ the work threads instead of the background/passive threads, and it doesn't allow
 
 Wraps around `(next)` to create a delayed active task. Much like `setTimeout` in
 Javascript. `time` is in seconds.
-
-    (enqueue function &key (type :passive))
-
-Send a function to be worked on in the background. `:type` can be one of
-`(:active :passive :work)`, each one corresponding to which queue to send 
-`function` to be executed on.
 
 Performance
 -----------
