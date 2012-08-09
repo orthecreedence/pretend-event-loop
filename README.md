@@ -127,7 +127,7 @@ amount `next` sleeps, you can pass `:sleep .5` or disable it altogether with
 
 Exactly the same as the `next` macro, except it sends `cpu-intensive-op` off to
 the work threads instead of the background/passive threads, and it doesn't allow
-:sleep in the options (no point).
+`:sleep` in the options (no point).
 
     (delay time &body body)
 
@@ -136,7 +136,7 @@ Javascript. `time` is in seconds.
 
 Performance
 -----------
-It's mentioned in the code ove and over, but I think it's pertinent to mention
+It's mentioned in the code over and over, but I think it's pertinent to mention
 it again. _Never, ever do any real processing in your passive threads_. They are
 meant for running blocking operations only, and simple error handling if you
 need it. It's better to run a passive thread as close as possible to the place
