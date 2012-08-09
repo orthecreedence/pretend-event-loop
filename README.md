@@ -102,9 +102,14 @@ Send a function to be worked on in the background. `:type` can be one of
     (size type)
 
 Count the items in a queue. `type` can be one of `(:active :passive :work)`.
-This can be very useful for rate-limiting intake of work items in an app. For
-instance, you may want to stop reading jobs off of a queue after you have a
-certain number of blocking or cpu-intensive operations queued.
+
+    (fullp type)
+
+Test if a queue is full. `type` can be one of `(:active :passive :work)`.  This
+can be very useful for rate-limiting intake of work items in an app. For
+instance, you may want to stop pulling items out of a database for an amount of
+time of each item is spawning a number of passive jobs (indefinitely growing
+passive queue).
 
     (next (varname &key multiple-value-list sleep) blocking-op &body body)
 

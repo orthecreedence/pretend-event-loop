@@ -8,6 +8,7 @@
            #:delay
            #:enqueue
            #:size
+           #:fullp
            #:event-loop-stop
            #:event-loop-force-stop
            #:event-loop-start)
@@ -66,6 +67,14 @@
                      (:active *internal-active-queue*)
                      (:passive *internal-passive-queue*)
                      (:work *internal-work-queue*))))
+
+(defun fullp (type)
+  "Test if a specific queue is full."
+  (assert (find type '(:active :passive :work)))
+  (case type
+    (:passive (< *max-passive-threads* (size :passive)))
+    (:work (< *max-work-threads* (size :work)))
+    (:active nil)))
 
 (defmacro background-task (var-and-options operation &body body)
   "Wraps the following task:
