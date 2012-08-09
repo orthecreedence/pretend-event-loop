@@ -72,7 +72,10 @@ num-cores - 1 (the fourth core is used for the main thread).
 
 `integer`. How many threads are spawned specifically for running blocking ops.
 If more than `*max-passive-threads*` blocking ops are queued, they are pulled
-out by the passive threads FIFO.
+out by the passive threads FIFO. This is a value that will probably be very
+dependent on your app and the machine you're running on. Obviously, the higher
+you can get this number without breaking your load average, the better. Play
+with it.
 
     (event-loop-start &key error-handler)
 
