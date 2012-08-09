@@ -1,10 +1,11 @@
 (defpackage :pretend-event-loop
   (:use :cl)
   (:export #:*max-work-threads*
-           #:*max-blocking-ops*
+           #:*max-passive-threads*
            
            #:next
            #:work
+           #:delay
            #:enqueue
            #:event-loop-stop
            #:event-loop-force-stop
@@ -16,9 +17,8 @@
   "The number of work threads to spawn. Work threads are used to send long 
    running CPU intensive work to without blocking the main thread. Set this
    value to (1- number-of-cores).")
-(defparameter *max-blocking-ops* 10
-  "The maximum number of blocking operations to queue in the background before
-   the active thread blocks.")
+(defparameter *max-passive-threads* 10
+  "The maximum number of blocking operations to run in the background.")
 
 (defvar *internal-active-queue* nil)
 (defvar *internal-passive-queue* nil)
@@ -38,7 +38,7 @@
    loop. It's the thread that does everything besides blocking operations.
    
    If :type is :passive, sends the function to the passive queue, to be
-   executed by one of *max-blocking-ops* passive workers. It is BEST PRACTICE
+   executed by one of *max-passive-threads* passive workers. It is BEST PRACTICE
    (hint hint) to do as absolutely little as possible in a passive thread. You
    generally want to run your blocking operation then GTFO. If you need to
    process the result, send it to the :active thread =].
@@ -100,13 +100,9 @@
    executing the program, and non-blocking operations queue callbacks once they
    return.
 
-   If there are *max-blocking-ops* queued in the passive (blocking) queue, this
-   operation blocks the current (calling) thread until there is at least one
-   open spot in the passive queue.
-   
    After the blocking operation is queued, the active (current) thread sleeps
    for the specified amount of time (default .02s) to allow the blocking op to
-   actually block before it continues processing.
+   actually enter the block before it continues processing.
    
    Once the blocking operation is finished, the result is wrapped in a closure
    which is then sent off to the active queue (run by the main thread). This
@@ -132,8 +128,6 @@
    sending the results back to the active thread. Works much like the (next ...)
    macro, except it doesn't sleep before returning to the active thread.
 
-   If all worker threads are being used, this will block the calling thread.
-   
    Usage:
      (work (varname &key :multiple-value-list) cpu-intensive-op &body body)
      
@@ -142,6 +136,12 @@
   (let ((varname (car var-and-options))
         (options (cdr var-and-options)))
     `(background-task (,varname ,@(append (list :background-type :work :sleep nil) options)) ,cpu-intensive-op ,@body)))
+
+(defmacro delay (time &body body)
+  "Delays execution by the specified number of seconds. Convenience macro that
+   wraps around (next)."
+  `(next () (sleep ,time)
+     ,@body))
 
 (defun active-dispatch (fn)
   "Wraps around the dispatching of active tasks. Allows adding logic around
@@ -201,7 +201,7 @@
 (defun event-loop-stop ()
   "Stop the event loop by signalling the active/passive workers to quit."
   (let ((quit-fn (lambda () (error 'poller-quit))))
-  (dotimes (i *max-blocking-ops*)
+  (dotimes (i *max-passive-threads*)
     (enqueue quit-fn))
   (dotimes (i *max-work-threads*)
     (enqueue quit-fn :type :work))
@@ -216,7 +216,7 @@
         *work-threads* nil))
 
 (defun event-loop-start (&key error-handler)
-  "Start the pretend event loop. Spins up *max-blocking-ops* threads, each of
+  "Start the pretend event loop. Spins up *max-passive-threads* threads, each of
    which pulls blocking operations off the passive queue and executes them and
    also spins up *max-work-threads* threads which pull operations off the work
    queue. It also starts the active thread, would would be likened to the main
@@ -229,15 +229,15 @@
   (setf *internal-active-queue* (make-instance 'jpl-queues:synchronized-queue
                                                :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
         *internal-passive-queue* (make-instance 'jpl-queues:synchronized-queue
-                                                :queue (make-instance 'jpl-queues:bounded-fifo-queue :capacity *max-blocking-ops*))
+                                                :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
         *internal-work-queue* (make-instance 'jpl-queues:synchronized-queue
-                                             :queue (make-instance 'jpl-queues:bounded-fifo-queue :capacity *max-work-threads*)))
+                                             :queue (make-instance 'jpl-queues:unbounded-fifo-queue)))
   ;; start THE active thread
   (push (bt:make-thread (lambda () (active-poller :error-handler error-handler)) :name "active-worker")
         *active-threads*)
 
   ;; start the passive threads
-  (dotimes (i *max-blocking-ops*)
+  (dotimes (i *max-passive-threads*)
     (push (bt:make-thread (lambda () (passive-poller :error-handler error-handler)) :name (format nil "passive-worker-~a" i))
           *passive-threads*)
     ;(when (zerop (mod (1+ i) 10)) (format t "Created thread ~a~%" (1+ i)))

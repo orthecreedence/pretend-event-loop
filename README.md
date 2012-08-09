@@ -47,7 +47,7 @@ available for processing). Once the job is grabbed, it is bound to `job` and the
 main thread start executing `(dispatch-job job)`.
 
 pretend-event-loop also works with long running, CPU-intensive jobs much in the
-same way. If you need to process a large amoutn of data without blocking, you
+same way. If you need to process a large amount of data without blocking, you
 use `(work ...)`:
 
     (pel:next (data) (grab-data-from-db)
@@ -67,14 +67,11 @@ package.
 CPU-intensive tasks.  It's a *really* good idea to keep this number at
 num-cores - 1 (the fourth core is used for the main thread).
 
-    *max-blocking-ops*
+    *max-passive-threads*
 
-`integer`. How many blocking operations are allowed to happen at once. If the
-number of blocking operations reaches this value, the next time a blocking op
-is queued, the active thread will block until a passive thread becomes
-available. In the future, this will probably change to be a configurable
-parameter: `*block-passive-when-saturated*` or something. For now, it blocks
-when full.
+`integer`. How many threads are spawned specifically for running blocking ops.
+If more than `*max-passive-threads*` blocking ops are queued, they are pulled
+out by the passive threads FIFO.
 
     (event-loop-start &key error-handler)
 
@@ -118,11 +115,33 @@ Exactly the same as the `next` macro, except it sends `cpu-intensive-op` off to
 the work threads instead of the background/passive threads, and it doesn't allow
 :sleep in the options (no point).
 
+    (delay time &body body)
+
+Wraps around `(next)` to create a delayed active task. Much like `setTimeout` in
+Javascript. `time` is in seconds.
+
     (enqueue function &key (type :passive))
 
 Send a function to be worked on in the background. `:type` can be one of
 `(:active :passive :work)`, each one corresponding to which queue to send 
 `function` to be executed on.
+
+Performance
+-----------
+It's mentioned in the code ove and over, but I think it's pertinent to mention
+it again. _Never, ever do any real processing in your passive threads_. They are
+meant for running blocking operations only, and simple error handling if you
+need it. It's better to run a passive thread as close as possible to the place
+it blocks. The less code between spwaning a passive job and when it blocks, the
+better. This system is designed to house a large number of passive threads and
+the last thing you want is 100 threads doing context switches.
+
+Also, this library makes no attempt to limit the number of blocking/work items
+you queue. It is up to your application to rate limit itself in some fashion if
+you are creating background work faster that it's processing.
+
+If you find that you're doing a lot of context switching, turn down
+`*max-passive-threads*` and adjust your app's rate limiting accordingly.
 
 Notes
 -----
