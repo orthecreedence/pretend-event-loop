@@ -81,7 +81,7 @@
                                                           `(multiple-value-list ,operation)
                                                           operation)))
              ;; once the op returns and is bound, we send it off the active queue,
-             ;; which only one thread will be executing
+             ;; which only the main thread will be executing
              (enqueue (lambda ()
                         ,(unless varname
                            `(declare (ignore ,fake-varname)))
