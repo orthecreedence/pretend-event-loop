@@ -11,7 +11,7 @@ sit and wait on blocking operations.
 
 So why would you use this instead of a real event loop?
  - This library is a lot more portable. It runs on *any* implementation that
- supports threads (via bordeaux-threads).
+ supports threads (via [bordeaux-threads](http://common-lisp.net/project/bordeaux-threads/)).
  - This library allows you to add an event-loop-like interface to your app
  *without* reprogramming all of your libraries to be evented.
 
