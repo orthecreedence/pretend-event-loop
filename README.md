@@ -34,8 +34,8 @@ a distributed work queue:
 	  (format t "Got connection. Reserving job.~%")
 	  ;; we have a connection, now asynchronously reserve the next job
 	  (pel:next (job :multiple-value-list t) (beanstalk:reserve conn)
-		;; we got a job! process it
-		(dispatch-job job)))
+		;; we got a job! process it (and presumably close conn when done)
+		(dispatch-job conn job)))
 
 So what's happening is you're creating a connection in a background thread. The
 main thread continues to execute (and process more tasks, if needed). Once the
