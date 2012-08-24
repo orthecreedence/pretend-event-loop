@@ -76,7 +76,7 @@
     (:work (< *max-work-threads* (size :work)))
     (:active nil)))
 
-(defmacro background-task (var-and-options operation &body body)
+(defmacro background-task ((varname &key (sleep 0.02) (background-type :passive) multiple-value-list) operation &body body)
   "Wraps the following task:
     - Spawn a background task in presumably a work or passive thread,
     - Once finished, bind result to given variable, wrap in closure, and send to
@@ -86,17 +86,13 @@
      (background-task (varname &key multiple-value-list sleep backround-type) &body body)
      
    This is mainly used by the next/work macros."
-  (let ((varname (car var-and-options))
-        (options (cdr var-and-options))
-        (fake-varname (gensym)))
+  (let ((fake-varname (gensym)))
     ;; by default, sleep .02s after queueing blocking op
-    (unless (find :sleep options)
-      (setf (getf options :sleep) 0.02))
     `(progn
        ;; enqueue the blocking op in the passive queue
        (enqueue
          (lambda ()
-           (let ((,(if varname varname fake-varname) ,(if (getf options :multiple-value-list)
+           (let ((,(if varname varname fake-varname) ,(if multiple-value-list
                                                           `(multiple-value-list ,operation)
                                                           operation)))
              ;; once the op returns and is bound, we send it off the active queue,
@@ -105,12 +101,10 @@
                         ,(unless varname
                            `(declare (ignore ,fake-varname)))
                         ,@body) :type :active)))
-         :type ,(if (getf options :background-type)
-                    (getf options :background-type)
-                    :passive))
+         :type ,background-type)
        ;; sleep so the blocking operation has time to enter the block.
-       ,(when (getf options :sleep)
-          `(sleep ,(getf options :sleep))))))
+       ,(when sleep
+          `(sleep ,sleep)))))
 
 (defmacro next (var-and-options blocking-op &body body)
   "Wraps around a blocking operation, grabs the result into the specified
