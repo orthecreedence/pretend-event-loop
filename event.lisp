@@ -11,6 +11,7 @@
            #:fullp
            #:event-loop-stop
            #:event-loop-force-stop
+           #:event-loop-init
            #:event-loop-start)
   (:nicknames :pel))
 (in-package :pretend-event-loop)
@@ -76,7 +77,7 @@
     (:work (< *max-work-threads* (size :work)))
     (:active nil)))
 
-(defmacro background-task ((varname &key (sleep 0.02) (background-type :passive) multiple-value-list) operation &body body)
+(defmacro background-task ((varname &key sleep (background-type :passive) multiple-value-list) operation &body body)
   "Wraps the following task:
     - Spawn a background task in presumably a work or passive thread,
     - Once finished, bind result to given variable, wrap in closure, and send to
@@ -171,50 +172,53 @@
    invoking work tasks without restarting the work threads."
   (funcall fn))
 
+(defmacro wrap-poller-error-handling ((error-bind error-handler) op quit trigger-error)
+  "Removes ugliness from poller error handling (or lack thereof)."
+  `(if (functionp ,error-handler)
+       (handler-case
+         ,op
+         (poller-quit ()
+           ,quit)
+         (error (e)
+           ,trigger-error))
+       (handler-case
+         ,op
+         (poller-quit ()
+           ,quit))))
+
 (defun active-poller (&key error-handler)
   "Start the active thread. Executes items off the active queue. Allows passing
    in of error handler which will catch any errors in the blocking op."
   (loop for active-op = (jpl-queues:dequeue *internal-active-queue*) do
-    (handler-case
+    (wrap-poller-error-handling (e error-handler)
       (active-dispatch active-op)
-      (poller-quit ()
-        (return-from active-poller t))
-      (error (e)
-        (if (subtypep (type-of error-handler) 'function)
-            (funcall error-handler e)
-            (error e))))))
+      (return-from active-poller t)
+      (funcall error-handler e))))
 
 (defun passive-poller (&key error-handler)
   "Start a poller. Executes blocking operations off the passive queue. Allows
    passing in of error handler which will catch any errors in the blocking op.
    The error handler *is run in the active thread*."
   (loop for blocking-op = (jpl-queues:dequeue *internal-passive-queue*) do
-    (handler-case 
+    (wrap-poller-error-handling (e error-handler)
       (passive-dispatch blocking-op)
-      (poller-quit ()
-        (return-from passive-poller t))
-      (error (e)
-        (if (subtypep (type-of error-handler) 'function)
-            (enqueue (lambda () (funcall error-handler e)) :type :active)
-            (error e))))))
+      (return-from passive-poller t)
+      (enqueue (lambda () (funcall error-handler e)) :type :active))))
 
 (defun work-poller (&key error-handler)
   "Start a worker thread. Does long-running CPU intensive tasks that are not
    well suited for the active thread."
-  (loop for work-op = (jpl-queues:dequeue *internal-active-queue*) do
-    (handler-case
+  (loop for work-op = (jpl-queues:dequeue *internal-work-queue*) do
+    (wrap-poller-error-handling (e error-handler)
       (work-dispatch work-op)
-      (poller-quit ()
-        (return-from work-poller t))
-      (error (e)
-        (if (subtypep (type-of error-handler) 'function)
-            (funcall error-handler e)
-            (error e))))))
+      (return-from work-poller t)
+      (enqueue (lambda () (funcall error-handler e)) :type :active))))
 
 (defun event-loop-stop ()
   "Stop the event loop by signalling the active/passive workers to quit."
   (let ((quit-fn (lambda () (error 'poller-quit))))
   (dotimes (i *max-passive-threads*)
+    (sleep .1)
     (enqueue quit-fn))
   (dotimes (i *max-work-threads*)
     (enqueue quit-fn :type :work))
@@ -228,6 +232,15 @@
         *passive-threads* nil
         *work-threads* nil))
 
+(defun event-loop-init ()
+  "Initialize the event loop (queues, mainly)."
+  (setf *internal-active-queue* (make-instance 'jpl-queues:synchronized-queue
+                                               :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
+        *internal-passive-queue* (make-instance 'jpl-queues:synchronized-queue
+                                                :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
+        *internal-work-queue* (make-instance 'jpl-queues:synchronized-queue
+                                             :queue (make-instance 'jpl-queues:unbounded-fifo-queue))))
+
 (defun event-loop-start (&key error-handler)
   "Start the pretend event loop. Spins up *max-passive-threads* threads, each of
    which pulls blocking operations off the passive queue and executes them and
@@ -239,16 +252,6 @@
    handles all unhandled errors in the active and passive threads. If an error
    happens in a passive thread, the error handler is sent *to the active thread*
    to run."
-  (setf *internal-active-queue* (make-instance 'jpl-queues:synchronized-queue
-                                               :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
-        *internal-passive-queue* (make-instance 'jpl-queues:synchronized-queue
-                                                :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
-        *internal-work-queue* (make-instance 'jpl-queues:synchronized-queue
-                                             :queue (make-instance 'jpl-queues:unbounded-fifo-queue)))
-  ;; start THE active thread
-  (push (bt:make-thread (lambda () (active-poller :error-handler error-handler)) :name "active-worker")
-        *active-threads*)
-
   ;; start the passive threads
   (dotimes (i *max-passive-threads*)
     (push (bt:make-thread (lambda () (passive-poller :error-handler error-handler)) :name (format nil "passive-worker-~a" i))
@@ -260,5 +263,10 @@
   (dotimes (i *max-work-threads*)
     (push (bt:make-thread (lambda () (work-poller :error-handler error-handler)) :name (format nil "work-worker-~a" i))
           *work-threads*)
-    (sleep .01)))
-
+    (sleep .01))
+  
+  ;; start active poller
+  (active-poller :error-handler error-handler)
+  
+  ;;TODO: active poller has exited, cleanup the rest of the threads
+  )
