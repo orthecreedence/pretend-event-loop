@@ -26,8 +26,8 @@ thread, binds the result of the blocking operation, and continues execution in
 the active (main) thread. Let's see an example with [beanstalkd](http://kr.github.com/beanstalkd/),
 a distributed work queue:
 
-	;; start the event loop with a custom error handler
-    (pel:event-loop-start :error-handler #'app-error-handler)
+    ;; init the loop
+    (pel:event-loop-init)
 
 	;; asynchronously grab a beanstalkd connection
     (pel:next (conn) (beanstalk:connect "127.0.0.1" 11300)
@@ -36,6 +36,10 @@ a distributed work queue:
 	  (pel:next (job :multiple-value-list t) (beanstalk:reserve conn)
 		;; we got a job! process it (and presumably close conn when done)
 		(dispatch-job conn job)))
+
+	;; start the event loop with a custom error handler
+    (pel:event-loop-start :error-handler #'app-error-handler)
+
 
 So what's happening is you're creating a connection in a background thread. The
 main thread continues to execute (and process more tasks, if needed). Once the
@@ -66,7 +70,7 @@ package.
 
 `integer`. This defines how many threads are available for background
 CPU-intensive tasks.  It's a *really* good idea to keep this number at
-num-cores - 1 (the fourth core is used for the main thread).
+num-cores - 1 (the last core is used for the main thread).
 
     *max-passive-threads*
 
@@ -127,7 +131,7 @@ you can get all the return values if you need them.
 By default, the macro sleeps the active thread by .02s directly after queuing
 the background task. This allows the background task to actually enter its
 blocking operation before the active thread continues execution, the idea being
-that we want to limit context switches to a minumum. If you want to change the
+that we want to limit context switches to a minimum. If you want to change the
 amount `next` sleeps, you can pass `:sleep .5` or disable it altogether with
 `:sleep nil`.
 
