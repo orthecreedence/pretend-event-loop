@@ -9,6 +9,7 @@
            #:enqueue
            #:size
            #:fullp
+           #:active-poller
            #:event-loop-stop
            #:event-loop-force-stop
            #:event-loop-init
