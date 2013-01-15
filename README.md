@@ -26,20 +26,21 @@ thread, binds the result of the blocking operation, and continues execution in
 the active (main) thread. Let's see an example with [beanstalkd](http://kr.github.com/beanstalkd/),
 a distributed work queue:
 
-    ;; init the loop
-    (pel:event-loop-init)
+```common-lisp
+;; init the loop
+(pel:event-loop-init)
 
-	;; asynchronously grab a beanstalkd connection
-    (pel:next (conn) (beanstalk:connect "127.0.0.1" 11300)
-	  (format t "Got connection. Reserving job.~%")
-	  ;; we have a connection, now asynchronously reserve the next job
-	  (pel:next (job :multiple-value-list t) (beanstalk:reserve conn)
-		;; we got a job! process it (and presumably close conn when done)
-		(dispatch-job conn job)))
+;; asynchronously grab a beanstalkd connection
+(pel:next (conn) (beanstalk:connect "127.0.0.1" 11300)
+  (format t "Got connection. Reserving job.~%")
+  ;; we have a connection, now asynchronously reserve the next job
+  (pel:next (job :multiple-value-list t) (beanstalk:reserve conn)
+	;; we got a job! process it (and presumably close conn when done)
+	(dispatch-job conn job)))
 
-	;; start the event loop with a custom error handler
-    (pel:event-loop-start :error-handler #'app-error-handler)
-
+;; start the event loop with a custom error handler
+(pel:event-loop-start :error-handler #'app-error-handler)
+```
 
 So what's happening is you're creating a connection in a background thread. The
 main thread continues to execute (and process more tasks, if needed). Once the
@@ -55,9 +56,11 @@ pretend-event-loop also works with long running, CPU-intensive jobs much in the
 same way. If you need to process a large amount of data without blocking, you
 use `(work ...)`:
 
-    (pel:next (data) (grab-data-from-db)
-	  (pel:work (result) (process-data data)
-	    (format t "The result is: ~a~%" result)))
+```common-lisp
+(pel:next (data) (grab-data-from-db)
+  (pel:work (result) (process-data data)
+    (format t "The result is: ~a~%" result)))
+```
 
 There you have it. Non-blocking IO (kind of) and a thread-pool to do heavy work.
 
@@ -66,13 +69,17 @@ Documentation
 This is an outline of all the publicly available variables/methods in this
 package.
 
-    *max-work-threads*
+```common-lisp
+*max-work-threads*
+```
 
 `integer`. This defines how many threads are available for background
 CPU-intensive tasks.  It's a *really* good idea to keep this number at
 num-cores - 1 (the last core is used for the main thread).
 
-    *max-passive-threads*
+```common-lisp
+*max-passive-threads*
+```
 
 `integer`. How many threads are spawned specifically for running blocking ops.
 If more than `*max-passive-threads*` blocking ops are queued, they are pulled
@@ -81,33 +88,45 @@ dependent on your app and the machine you're running on. Obviously, the higher
 you can get this number without breaking your load average, the better. Play
 with it.
 
-    (event-loop-start &key error-handler)
+```common-lisp
+(event-loop-start &key error-handler)
+```
 
 Start the "event loop." If specified, the error handler will be registered to
 all of workers. Note that when an error happens in a passive thread, it is sent
 to the active thread to be handled.
 
-    (event-loop-stop)
+```common-lisp
+(event-loop-stop)
+```
 
 Saturate each of the work queues with a function that signals them to quit. This
 is more or less a graceful exit.
 
-    (event-loop-force-stop)
+```common-lisp
+(event-loop-force-stop)
+```
 
 Forcibly destroy all of the threads (active thread, passive threads, work
 threads).
 
-    (enqueue function &key (type :passive))
+```common-lisp
+(enqueue function &key (type :passive))
+```
 
 Send a function to be worked on in the background. `:type` can be one of
 `(:active :passive :work)`, each one corresponding to which queue to send 
 `function` to be executed on.
 
-    (size type)
+```common-lisp
+(size type)
+```
 
 Count the items in a queue. `type` can be one of `(:active :passive :work)`.
 
-    (fullp type)
+```common-lisp
+(fullp type)
+```
 
 Test if a queue is full. `type` can be one of `(:active :passive :work)`.  This
 can be very useful for rate-limiting intake of work items in an app. For
@@ -115,7 +134,9 @@ instance, you may want to stop pulling items out of a database for an amount of
 time of each item is spawning a number of passive jobs (indefinitely growing
 passive queue).
 
-    (next (varname &key multiple-value-list sleep) blocking-op &body body)
+```common-lisp
+(next (varname &key multiple-value-list sleep) blocking-op &body body)
+```
 
 Wraps `blocking-op` in a function and sends it off to the background threads for
 processing. Once the passive thread finishes, it will bind the result of
@@ -135,13 +156,17 @@ that we want to limit context switches to a minimum. If you want to change the
 amount `next` sleeps, you can pass `:sleep .5` or disable it altogether with
 `:sleep nil`.
 
-    (work (varname &key multiple-value-list) cp-intensive-op &body body)
+```common-lisp
+(work (varname &key multiple-value-list) cp-intensive-op &body body)
+```
 
 Exactly the same as the `next` macro, except it sends `cpu-intensive-op` off to
 the work threads instead of the background/passive threads, and it doesn't allow
 `:sleep` in the options (no point).
 
-    (delay time &body body)
+```common-lisp
+(delay time &body body)
+```
 
 Wraps around `(next)` to create a delayed active task. Much like `setTimeout` in
 Javascript. `time` is in seconds.
