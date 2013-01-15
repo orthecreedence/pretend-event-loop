@@ -27,7 +27,6 @@
 (defvar *internal-passive-queue* nil)
 (defvar *internal-work-queue* nil)
 
-(defvar *active-threads* nil)
 (defvar *passive-threads* nil)
 (defvar *work-threads* nil)
 
@@ -189,7 +188,8 @@
 (defun active-poller (&key error-handler)
   "Start the active thread. Executes items off the active queue. Allows passing
    in of error handler which will catch any errors in the blocking op."
-  (loop for active-op = (jpl-queues:dequeue *internal-active-queue*) do
+  (loop until (jpl-queues:empty? *internal-active-queue*)
+        for active-op = (jpl-queues:dequeue *internal-active-queue*) do
     (wrap-poller-error-handling (e error-handler)
       (active-dispatch active-op)
       (return-from active-poller t)
@@ -226,10 +226,9 @@
 
 (defun event-loop-force-stop ()
   "Forcibly terminates the threads created."
-  (dolist (thread (append *active-threads* *passive-threads* *work-threads*))
+  (dolist (thread (append *passive-threads* *work-threads*))
     (bt:destroy-thread thread))
-  (setf *active-threads* nil
-        *passive-threads* nil
+  (setf *passive-threads* nil
         *work-threads* nil))
 
 (defun event-loop-init ()
@@ -248,6 +247,11 @@
    queue. It also starts the active thread, would would be likened to the main
    thread in an event loop (does everything, doesn't block).
    
+   If no work items are left in the active thread, it will return (but all the
+   queues will remain active). This allows tighter integration with a real event
+   loop. Once enqueue/next/work/etc is called again, the active poller will
+   start.
+   
    Allows passing in of a function that takes one argument (error object) that
    handles all unhandled errors in the active and passive threads. If an error
    happens in a passive thread, the error handler is sent *to the active thread*
@@ -264,9 +268,6 @@
     (push (bt:make-thread (lambda () (work-poller :error-handler error-handler)) :name (format nil "work-worker-~a" i))
           *work-threads*)
     (sleep .01))
-  
+
   ;; start active poller
-  (active-poller :error-handler error-handler)
-  
-  ;;TODO: active poller has exited, cleanup the rest of the threads
-  )
+  (active-poller :error-handler error-handler))
