@@ -92,9 +92,8 @@
      
    This is mainly used by the next/work macros."
   (let ((fake-varname (gensym)))
-    ;; by default, sleep .02s after queueing blocking op
     `(progn
-       ;; enqueue the blocking op in the passive queue
+       ;; enqueue the blocking op in the queue of our choosing
        (enqueue
          (lambda ()
            (let ((,(if varname varname fake-varname) ,(if multiple-value-list
@@ -241,18 +240,17 @@
 
 (defun make-event-loop (&key (num-passive 0) (num-workers 0))
   "Initialize an event loop (queues, mainly)."
-  (let ((event-loop (make-instance 'event-loop
-                                   :num-work-threads num-workers
-                                   :num-passive-threads num-passive
-                                   :active-queue (make-instance 'jpl-queues:synchronized-queue
-                                                                :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
-                                   :passive-queue (make-instance 'jpl-queues:synchronized-queue
-                                                                 :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
-                                   :work-queue (make-instance 'jpl-queues:synchronized-queue
-                                                              :queue (make-instance 'jpl-queues:unbounded-fifo-queue)))))
-    (unless *default-event-loop*
-      (setf *default-event-loop* event-loop))
-    event-loop))
+  (flet ((synchronize (queue)
+           (make-instance 'jpl-queues:synchronized-queue :queue queue)))
+    (let ((event-loop (make-instance 'event-loop
+                                     :num-work-threads num-workers
+                                     :num-passive-threads num-passive
+                                     :active-queue (synchronize (make-instance 'jpl-queues:unbounded-fifo-queue))
+                                     :passive-queue (synchronize (make-instance 'jpl-queues:unbounded-fifo-queue))
+                                     :work-queue (synchronize (make-instance 'jpl-queues:unbounded-fifo-queue)))))
+      (unless *default-event-loop*
+        (setf *default-event-loop* event-loop))
+      event-loop)))
 
 (defun event-loop-start (&key (event-loop *default-event-loop*) error-handler)
   "Start the pretend event loop. Spins up (event-loop-num-passive-threads event-loop) threads, each of
@@ -273,12 +271,10 @@
   ;; start the passive threads
   (dotimes (i (event-loop-num-passive-threads event-loop))
     (push (bt:make-thread (lambda () (passive-poller :error-handler error-handler)) :name (format nil "passive-worker-~a" i))
-          (event-loop-passive-threads event-loop))
-    (sleep .01))
+          (event-loop-passive-threads event-loop)))
 
   ;; start the worker threads
   (dotimes (i (event-loop-num-work-threads event-loop))
     (push (bt:make-thread (lambda () (work-poller :error-handler error-handler)) :name (format nil "work-worker-~a" i))
-          (event-loop-work-threads event-loop))
-    (sleep .01)))
+          (event-loop-work-threads event-loop))))
 
