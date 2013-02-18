@@ -1,83 +1,87 @@
 (defpackage :pretend-event-loop
   (:use :cl)
-  (:export #:*max-work-threads*
-           #:*max-passive-threads*
-           
-           #:next
-           #:work
-           #:delay
+  (:export #:*default-event-loop*
            #:enqueue
            #:size
            #:fullp
+           #:next
+           #:work
+           #:delay
            #:active-poller
            #:event-loop-stop
            #:event-loop-force-stop
-           #:event-loop-init
+           #:make-event-loop
            #:event-loop-start)
   (:nicknames :pel))
 (in-package :pretend-event-loop)
 
-(defparameter *max-work-threads* 3
-  "The number of work threads to spawn. Work threads are used to send long 
-   running CPU intensive work to without blocking the main thread. Set this
-   value to (1- number-of-cores).")
-(defparameter *max-passive-threads* 10
-  "The maximum number of blocking operations to run in the background.")
+(defclass event-loop ()
+  ((num-work-threads :accessor event-loop-num-work-threads :initarg :num-work-threads :initform 1
+     :documentation "The number of work threads to spawn. Work threads are used
+      to send long running CPU intensive work to without blocking the main
+      thread. Set this value to (1- number-of-cores).")
+   (num-passive-threads :accessor event-loop-num-passive-threads :initarg :num-passive-threads :initform 1
+     :documentation "The maximum number of blocking operations to run in the
+      background.")
+   (active-queue :accessor event-loop-active-queue :initarg :active-queue :initform nil)
+   (passive-queue :accessor event-loop-passive-queue :initarg :passive-queue :initform nil)
+   (work-queue :accessor event-loop-work-queue :initarg :work-queue :initform nil)
+   (passive-threads :accessor event-loop-passive-threads :initarg :passive-threads :initform nil)
+   (work-threads :accessor event-loop-work-threads :initarg :work-threads :initform nil)))
 
-(defvar *internal-active-queue* nil)
-(defvar *internal-passive-queue* nil)
-(defvar *internal-work-queue* nil)
-
-(defvar *passive-threads* nil)
-(defvar *work-threads* nil)
+(defmethod print-object ((event-loop event-loop) s)
+  (format s "#<event-loop (~s passive threads) (~s work-threads)>"
+          (length (remove-if-not #'bt:thread-alive-p (event-loop-passive-threads event-loop)))
+          (length (remove-if-not #'bt:thread-alive-p (event-loop-work-threads event-loop)))))
+                  
+(defvar *default-event-loop* nil)
 
 (define-condition poller-quit (error) ()
   (:report (lambda (c s) (declare (ignore c)) (format s "Quitting.")))
   (:documentation "Thrown to make a poller quit."))
 
-(defun enqueue (fn &key (type :passive))
+(defun enqueue (fn &key (type :passive) (event-loop *default-event-loop*))
   "Queue a function for processing. If :type is :active, it sends it to be
    executed by the active thread, which would be the main thread in an event
    loop. It's the thread that does everything besides blocking operations.
    
    If :type is :passive, sends the function to the passive queue, to be
-   executed by one of *max-passive-threads* passive workers. It is BEST PRACTICE
+   executed by one of (event-loop-num-passive-threads event-loop) passive workers. It is BEST PRACTICE
    (hint hint) to do as absolutely little as possible in a passive thread. You
    generally want to run your blocking operation then GTFO. If you need to
    process the result, send it to the :active thread =].
 
    :type can also be :work, which sends the function to a worker thread. These
    threads are specificically designated for CPU-intensive tasks, so you really
-   should have no more *max-work-threads* than your number of cores.
+   should have no more (event-loop-num-work-threads event-loop) than your number of cores.
 
    TL;DR: Send any blocking operations to :passive. Heavy lifting goes into
    :work. Everything else goes into :active. Don't do anything but blocking ops
    in :passive. Ever."
   (assert (find type '(:active :passive :work)))
   (jpl-queues:enqueue fn (case type
-                           (:active *internal-active-queue*)
-                           (:passive *internal-passive-queue*)
-                           (:work *internal-work-queue*))))
+                           (:active (event-loop-active-queue event-loop))
+                           (:passive (event-loop-passive-queue event-loop))
+                           (:work (event-loop-work-queue event-loop)))))
 
-
-(defun size (type)
+(defun size (type &key (event-loop *default-event-loop*))
   "Count how many elements are in a queue. Great for rate-limiting intake in an
    application."
   (assert (find type '(:active :passive :work)))
   (jpl-queues:size (case type
-                     (:active *internal-active-queue*)
-                     (:passive *internal-passive-queue*)
-                     (:work *internal-work-queue*))))
+                     (:active (event-loop-active-queue event-loop))
+                     (:passive (event-loop-passive-queue event-loop))
+                     (:work (event-loop-work-queue event-loop)))))
 
-(defun fullp (type)
+(defun fullp (type &key (event-loop *default-event-loop*))
   "Test if a specific queue is full."
   (assert (find type '(:active :passive :work)))
   (case type
-    (:passive (< *max-passive-threads* (size :passive)))
-    (:work (< *max-work-threads* (size :work)))
+    (:passive (< (event-loop-num-passive-threads event-loop) (size :passive)))
+    (:work (< (event-loop-num-work-threads event-loop) (size :work)))
     (:active nil)))
 
-(defmacro background-task ((varname &key sleep (background-type :passive) multiple-value-list) operation &body body)
+(defmacro background-task ((varname &key sleep (background-type :passive) multiple-value-list (event-loop '*default-event-loop*)) operation &body body)
   "Wraps the following task:
     - Spawn a background task in presumably a work or passive thread,
     - Once finished, bind result to given variable, wrap in closure, and send to
@@ -101,7 +105,9 @@
              (enqueue (lambda ()
                         ,(unless varname
                            `(declare (ignore ,fake-varname)))
-                        ,@body) :type :active)))
+                        ,@body)
+                      :type :active
+                      :event-loop ,event-loop)))
          :type ,background-type)
        ;; sleep so the blocking operation has time to enter the block.
        ,(when sleep
@@ -179,72 +185,79 @@
          ,op
          (poller-quit ()
            ,quit)
-         (error (e)
+         (error (,error-bind)
            ,trigger-error))
        (handler-case
          ,op
          (poller-quit ()
            ,quit))))
 
-(defun active-poller (&key error-handler)
+(defun active-poller (&key (event-loop *default-event-loop*) error-handler)
   "Start the active thread. Executes items off the active queue. Allows passing
    in of error handler which will catch any errors in the blocking op."
-  (loop until (jpl-queues:empty? *internal-active-queue*)
-        for active-op = (jpl-queues:dequeue *internal-active-queue*) do
+  (loop until (jpl-queues:empty? (event-loop-active-queue event-loop))
+        for active-op = (jpl-queues:dequeue (event-loop-active-queue event-loop)) do
     (wrap-poller-error-handling (e error-handler)
       (active-dispatch active-op)
       (return-from active-poller t)
       (funcall error-handler e))))
 
-(defun passive-poller (&key error-handler)
+(defun passive-poller (&key (event-loop *default-event-loop*) error-handler)
   "Start a poller. Executes blocking operations off the passive queue. Allows
    passing in of error handler which will catch any errors in the blocking op.
    The error handler *is run in the active thread*."
-  (loop for blocking-op = (jpl-queues:dequeue *internal-passive-queue*) do
+  (loop for blocking-op = (jpl-queues:dequeue (event-loop-passive-queue event-loop)) do
     (wrap-poller-error-handling (e error-handler)
       (passive-dispatch blocking-op)
       (return-from passive-poller t)
       (enqueue (lambda () (funcall error-handler e)) :type :active))))
 
-(defun work-poller (&key error-handler)
+(defun work-poller (&key (event-loop *default-event-loop*) error-handler)
   "Start a worker thread. Does long-running CPU intensive tasks that are not
    well suited for the active thread."
-  (loop for work-op = (jpl-queues:dequeue *internal-work-queue*) do
+  (loop for work-op = (jpl-queues:dequeue (event-loop-work-queue event-loop)) do
     (wrap-poller-error-handling (e error-handler)
       (work-dispatch work-op)
       (return-from work-poller t)
       (enqueue (lambda () (funcall error-handler e)) :type :active))))
 
-(defun event-loop-stop ()
+(defun event-loop-stop (&key (event-loop *default-event-loop*))
   "Stop the event loop by signalling the active/passive workers to quit."
   (let ((quit-fn (lambda () (error 'poller-quit))))
-  (dotimes (i *max-passive-threads*)
-    (sleep .1)
+  (dotimes (i (event-loop-num-passive-threads event-loop))
+    (sleep .01)
     (enqueue quit-fn))
-  (dotimes (i *max-work-threads*)
+  (dotimes (i (event-loop-num-work-threads event-loop))
     (enqueue quit-fn :type :work))
   (enqueue quit-fn :type :active)))
 
-(defun event-loop-force-stop ()
+(defun event-loop-force-stop (&key (event-loop *default-event-loop*))
   "Forcibly terminates the threads created."
-  (dolist (thread (append *passive-threads* *work-threads*))
+  (dolist (thread (append (event-loop-passive-threads event-loop)
+                          (event-loop-work-threads event-loop)))
     (bt:destroy-thread thread))
-  (setf *passive-threads* nil
-        *work-threads* nil))
+  (setf (event-loop-passive-threads event-loop) nil
+        (event-loop-work-threads event-loop) nil))
 
-(defun event-loop-init ()
-  "Initialize the event loop (queues, mainly)."
-  (setf *internal-active-queue* (make-instance 'jpl-queues:synchronized-queue
-                                               :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
-        *internal-passive-queue* (make-instance 'jpl-queues:synchronized-queue
-                                                :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
-        *internal-work-queue* (make-instance 'jpl-queues:synchronized-queue
-                                             :queue (make-instance 'jpl-queues:unbounded-fifo-queue))))
+(defun make-event-loop (&key (num-passive 0) (num-workers 0))
+  "Initialize an event loop (queues, mainly)."
+  (let ((event-loop (make-instance 'event-loop
+                                   :num-work-threads num-workers
+                                   :num-passive-threads num-passive
+                                   :active-queue (make-instance 'jpl-queues:synchronized-queue
+                                                                :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
+                                   :passive-queue (make-instance 'jpl-queues:synchronized-queue
+                                                                 :queue (make-instance 'jpl-queues:unbounded-fifo-queue))
+                                   :work-queue (make-instance 'jpl-queues:synchronized-queue
+                                                              :queue (make-instance 'jpl-queues:unbounded-fifo-queue)))))
+    (unless *default-event-loop*
+      (setf *default-event-loop* event-loop))
+    event-loop))
 
-(defun event-loop-start (&key error-handler)
-  "Start the pretend event loop. Spins up *max-passive-threads* threads, each of
+(defun event-loop-start (&key (event-loop *default-event-loop*) error-handler)
+  "Start the pretend event loop. Spins up (event-loop-num-passive-threads event-loop) threads, each of
    which pulls blocking operations off the passive queue and executes them and
-   also spins up *max-work-threads* threads which pull operations off the work
+   also spins up (event-loop-num-work-threads event-loop) threads which pull operations off the work
    queue. It also starts the active thread, would would be likened to the main
    thread in an event loop (does everything, doesn't block).
    
@@ -258,17 +271,14 @@
    happens in a passive thread, the error handler is sent *to the active thread*
    to run."
   ;; start the passive threads
-  (dotimes (i *max-passive-threads*)
+  (dotimes (i (event-loop-num-passive-threads event-loop))
     (push (bt:make-thread (lambda () (passive-poller :error-handler error-handler)) :name (format nil "passive-worker-~a" i))
-          *passive-threads*)
-    ;(when (zerop (mod (1+ i) 10)) (format t "Created thread ~a~%" (1+ i)))
+          (event-loop-passive-threads event-loop))
     (sleep .01))
 
   ;; start the worker threads
-  (dotimes (i *max-work-threads*)
+  (dotimes (i (event-loop-num-work-threads event-loop))
     (push (bt:make-thread (lambda () (work-poller :error-handler error-handler)) :name (format nil "work-worker-~a" i))
-          *work-threads*)
-    (sleep .01))
+          (event-loop-work-threads event-loop))
+    (sleep .01)))
 
-  ;; start active poller
-  (active-poller :error-handler error-handler))
